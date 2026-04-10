@@ -374,6 +374,13 @@ def test_mixtral(command):
             mini_sm=89,
             attn_backend="FLASHINFER",
         ),
+        *ModelDeployerList(
+            model_id="nvidia/Gemma-4-31B-IT-NVFP4",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=1,
+            mini_sm=100,
+            attn_backend="FLASHINFER",
+        ),
     ],
     ids=idfn,
 )
@@ -479,6 +486,18 @@ def test_kimi(command):
             mini_sm=89,
             attn_backend="FLASHINFER",
         ),
+        *ModelDeployerList(
+            model_id="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=8,
+            mini_sm=89,
+        ),
+        *ModelDeployerList(
+            model_id="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=8,
+            mini_sm=100,
+        ),
     ],
     ids=idfn,
 )
@@ -510,7 +529,6 @@ def test_llama_nemotron(command):
     ],
     ids=idfn,
 )
-@pytest.mark.skip(reason="Medusa is not supported yet")
 def test_medusa(command):
     command.run()
 
@@ -632,3 +650,19 @@ def test_eagle(command):
         command.run()
     else:
         pytest.skip(f"Local model not found: {local_path}")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        *ModelDeployerList(
+            model_id="nvidia/MiniMax-M2.5-NVFP4",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=8,
+            mini_sm=100,
+        ),
+    ],
+    ids=idfn,
+)
+def test_minimax(command):
+    command.run()
