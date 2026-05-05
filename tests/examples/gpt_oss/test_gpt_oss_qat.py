@@ -67,6 +67,10 @@ class GPTOSS:
             self.model_path,
             "--output_dir",
             str(output_dir),
+            "--warmup_steps",
+            "0",
+            "--warmup_ratio",
+            "0.03",
         ]
 
         run_example_command(cmd_parts, "gpt-oss")
@@ -94,6 +98,10 @@ class GPTOSS:
             "MXFP4_MLP_WEIGHT_ONLY_CFG",
             "--output_dir",
             str(qat_output_dir),
+            "--warmup_steps",
+            "0",
+            "--warmup_ratio",
+            "0.03",
         ]
 
         run_example_command(cmd_parts, "gpt-oss")
@@ -153,6 +161,10 @@ class GPTOSS:
             "MXFP4_MLP_WEIGHT_ONLY_CFG",
             "--output_dir",
             str(qat_output_dir),
+            "--warmup_steps",
+            "0",
+            "--warmup_ratio",
+            "0.03",
         ]
 
         run_example_command(cmd_parts, "gpt-oss")
