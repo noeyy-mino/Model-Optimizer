@@ -309,15 +309,18 @@ class ModelDeployer:
         """Run vLLM deploy (used by subprocess in run())."""
         from vllm import LLM, SamplingParams
 
-        quantization_method = "modelopt"
-        if "fp4" in self.model_id.lower():
-            quantization_method = "modelopt_fp4"
-        llm = LLM(
-            model=self.model_id,
-            quantization=quantization_method,
-            tensor_parallel_size=self.tensor_parallel_size,
-            trust_remote_code=True,
-        )
+        llm_kwargs = {
+            "model": self.model_id,
+            "tensor_parallel_size": self.tensor_parallel_size,
+            "trust_remote_code": True,
+        }
+        model_id_lower = self.model_id.lower()
+        if "fp4" in model_id_lower:
+            llm_kwargs["quantization"] = "modelopt_fp4"
+        elif "fp8" in model_id_lower:
+            llm_kwargs["quantization"] = "modelopt"
+
+        llm = LLM(**llm_kwargs)
         sampling_params = SamplingParams(temperature=0.8, top_p=0.9)
         outputs = llm.generate(COMMON_PROMPTS, sampling_params)
 
