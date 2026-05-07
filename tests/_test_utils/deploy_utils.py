@@ -252,6 +252,7 @@ class ModelDeployer:
         """Run TensorRT-LLM deploy (used by subprocess in run())."""
         from tensorrt_llm import LLM, SamplingParams
         from tensorrt_llm.llmapi import CudaGraphConfig, EagleDecodingConfig, KvCacheConfig
+        from transformers import AutoTokenizer
 
         sampling_params = SamplingParams(max_tokens=32)
         qwen3_models = (
@@ -297,7 +298,22 @@ class ModelDeployer:
                 **base_kw,
             )
 
-        outputs = llm.generate(COMMON_PROMPTS, sampling_params)
+        tokenizer_source = self.base_model if "eagle" in self.model_id.lower() else self.model_id
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
+        prompts = COMMON_PROMPTS
+        if getattr(tokenizer, "chat_template", None):
+            prompts = [
+                tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                for prompt in COMMON_PROMPTS
+            ]
+        else:
+            print(f"Tokenizer for {tokenizer_source} does not define a chat template; using raw prompts.")
+
+        outputs = llm.generate(prompts, sampling_params)
         # Print outputs
         for output in outputs:
             prompt = output.prompt
