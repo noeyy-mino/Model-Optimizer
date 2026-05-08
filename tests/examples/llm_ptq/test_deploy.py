@@ -131,6 +131,11 @@ def test_deepseek(command):
             tensor_parallel_size=4,
         ),
         *ModelDeployerList(
+            model_id="meta-llama/Llama-3.3-70B-Instruct",
+            backend=("trtllm",),
+            tensor_parallel_size=8,
+        ),
+        *ModelDeployerList(
             model_id="nvidia/Llama-3.3-70B-Instruct-NVFP4",
             backend=("trtllm", "vllm", "sglang"),
             tensor_parallel_size=4,
