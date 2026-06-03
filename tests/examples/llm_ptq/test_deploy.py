@@ -472,7 +472,7 @@ def test_eagle(command):
     [
         *ModelDeployerList(
             model_id="nvidia/GLM-5-NVFP4",
-            backend=("sglang",),
+            backend=("vllm", "sglang"),
             tensor_parallel_size=8,
             mini_sm=100,
         ),
