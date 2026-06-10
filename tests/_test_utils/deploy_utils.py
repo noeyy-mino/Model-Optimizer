@@ -295,6 +295,7 @@ class ModelDeployer:
         else:
             llm = LLM(
                 model=self.model_id,
+                backend="pytorch",
                 kv_cache_config=kv_cache_config,
                 **base_kw,
             )
