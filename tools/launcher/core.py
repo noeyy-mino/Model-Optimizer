@@ -38,18 +38,29 @@ DEFAULT_EXPERIMENT_TITLE = "cicd"
 def get_default_env(experiment_title=None):
     """Return (slurm_env, local_env) dicts for the given experiment title."""
     title = experiment_title or DEFAULT_EXPERIMENT_TITLE
+    # specdec_bench upload credentials — forwarded so that the YAML pipeline
+    # step `common/specdec_bench/upload_to_s3.sh` can publish to the team
+    # S3 bucket without baking secrets into committed YAMLs. The prefix
+    # disambiguates from any other S3 creds a CI runner might carry.
+    specdec_s3 = {
+        "SPECDEC_BENCH_S3_ENDPOINT": os.getenv("SPECDEC_BENCH_S3_ENDPOINT", ""),
+        "SPECDEC_BENCH_S3_KEY_ID": os.getenv("SPECDEC_BENCH_S3_KEY_ID", ""),
+        "SPECDEC_BENCH_S3_SECRET": os.getenv("SPECDEC_BENCH_S3_SECRET", ""),
+    }
     slurm_env = {
         "TRITON_CACHE_DIR": f"/{title}/triton-cache",
         "HF_HOME": f"/{title}/hf-cache",
         "HF_TOKEN": os.getenv("HF_TOKEN", ""),
         "MLM_SKIP_INSTALL": "1",
         "LAUNCH_SCRIPT": "python",
+        **specdec_s3,
     }
     local_env = {
         "TRITON_CACHE_DIR": f"/{title}/triton-cache",
         "HF_HOME": f"/{title}/hf-cache",
         "HF_TOKEN": os.getenv("HF_TOKEN", ""),
         "MLM_SKIP_INSTALL": "1",
+        **specdec_s3,
     }
     return slurm_env, local_env
 
@@ -64,9 +75,19 @@ def set_slurm_config_type(cls):
     """Register the SlurmConfig dataclass type used by SandboxTask."""
     global _SLURM_CONFIG_TYPE
     _SLURM_CONFIG_TYPE = cls
-    # Patch SandboxTask's type annotation so nemo-run's CLI parser can resolve factories
-    SandboxTask.__dataclass_fields__["slurm_config"].type = cls
-    SandboxTask.__annotations__["slurm_config"] = cls
+    # Patch every task dataclass so nemo-run's CLI parser sees the concrete
+    # SlurmConfig type for task_0/task_1/... fields, not the base `object`.
+    for task_cls in (
+        SandboxTask,
+        SandboxTask0,
+        SandboxTask1,
+        SandboxTask2,
+        SandboxTask3,
+        SandboxTask4,
+    ):
+        task_cls.__dataclass_fields__["slurm_config"].type = cls
+        task_cls.__annotations__["slurm_config"] = cls
+        task_cls.__init__.__annotations__["slurm_config"] = cls
 
 
 def register_factory(name, fn):
@@ -143,6 +164,16 @@ class GlobalVariables:
     hf_data: str = None
     hf_local: str = None
     output_dir: str = None
+    # Speculative-decoding draft / assistant model path. SPEED-bench
+    # MTP/EAGLE3/DRAFT_TARGET/DFLASH parent YAMLs reference this via
+    # ``--draft_model_dir <<global_vars.draft_model>>`` on both the
+    # qualitative + throughput_32k tasks so the path lives in one
+    # place. Surfaced on OMNIML-5024: the gemma-4-E4B-it / MTP / vLLM
+    # parent used the indirection but the launcher rejected it with
+    # ``No parameter named 'draft_model' exists`` because the
+    # dataclass schema didn't include the key; the agent worked
+    # around it inline but the canonical YAML stayed broken.
+    draft_model: str = None
 
 
 @dataclass
@@ -226,6 +257,7 @@ def build_slurm_executor(
     job_dir,
     task_name,
     packager,
+    modelopt_src_path=None,
     experiment_title="cicd",
 ):
     """Build a SlurmExecutor for remote job submission."""
@@ -233,32 +265,35 @@ def build_slurm_executor(
 
     scratch_dst = "/scratchspace"
     scratch_src = f"{job_dir}/{experiment_title}/{experiment_id}"
-    modelopt_dst = slurm_config.modelopt_install_path
-    modelopt_src = (
-        f"{job_dir}/{experiment_title}/{experiment_id}"
-        f"/{task_name}/code/modules/Model-Optimizer/modelopt"
-    )
-    modelopt_recipes_dst = os.path.join(
-        os.path.dirname(os.path.normpath(slurm_config.modelopt_install_path)),
-        "modelopt_recipes",
-    )
-    modelopt_recipes_src = (
-        f"{job_dir}/{experiment_title}/{experiment_id}"
-        f"/{task_name}/code/modules/Model-Optimizer/modelopt_recipes"
-    )
     container_mounts += [
         f"{scratch_src}:{scratch_dst}",
-        f"{modelopt_src}:{modelopt_dst}",
-        f"{modelopt_recipes_src}:{modelopt_recipes_dst}",
         f"{job_dir}/{experiment_title}:/{experiment_title}",
     ]
+    if modelopt_src_path:
+        modelopt_dst = slurm_config.modelopt_install_path
+        modelopt_src = (
+            f"{job_dir}/{experiment_title}/{experiment_id}"
+            f"/{task_name}/code/modules/Model-Optimizer/modelopt"
+        )
+        modelopt_recipes_dst = os.path.join(
+            os.path.dirname(os.path.normpath(slurm_config.modelopt_install_path)),
+            "modelopt_recipes",
+        )
+        modelopt_recipes_src = (
+            f"{job_dir}/{experiment_title}/{experiment_id}"
+            f"/{task_name}/code/modules/Model-Optimizer/modelopt_recipes"
+        )
+        container_mounts += [
+            f"{modelopt_src}:{modelopt_dst}",
+            f"{modelopt_recipes_src}:{modelopt_recipes_dst}",
+        ]
 
     # When launching from a login node inside the cluster (host is localhost),
     # use a LocalTunnel: nemo_run then runs sbatch and copies artifacts via local
     # subprocess/shutil instead of ssh+rsync. This avoids flaky/hanging ssh-to-
     # localhost (e.g. MaxStartups throttling on a shared login node, or clusters
-    # like HSG that are only reachable through an sss proxy so paramiko can't
-    # tunnel in from outside). For real remote hosts, keep the SSHTunnel.
+    # only reachable through a login proxy so paramiko can't tunnel in from
+    # outside). For real remote hosts, keep the SSHTunnel.
     if slurm_config.host in ("localhost", "127.0.0.1"):
         tunnel = run.LocalTunnel(job_dir=job_dir)
     else:
@@ -269,6 +304,15 @@ def build_slurm_executor(
             job_dir=job_dir,
             identity=identity,
         )
+
+    # --segment=<N>: pin all nodes into one topology block (one NVL72 / NVLink domain).
+    # getattr (not attribute access) keeps older/custom SlurmConfig types patched in via
+    # set_slurm_config_type that predate the `segment` field from raising AttributeError.
+    # None -> omit the kwarg entirely so the scheduler places freely (default behavior).
+    optional_kwargs = {}
+    segment = getattr(slurm_config, "segment", None)
+    if segment is not None:
+        optional_kwargs["segment"] = segment
 
     executor = run.SlurmExecutor(
         account=slurm_config.account,
@@ -282,11 +326,21 @@ def build_slurm_executor(
         container_mounts=container_mounts,
         array=slurm_config.array,
         time=slurm_config.time,
-        mem="0",
+        mem=getattr(slurm_config, "mem", None) or "0",
         retries=0,
         packager=packager,
         srun_args=slurm_config.srun_args,
+        # Copy into a fresh dict so the requeue mutation below doesn't leak back into
+        # the shared slurm_config.additional_parameters.
+        additional_parameters=dict(getattr(slurm_config, "additional_parameters", None) or {}),
+        **optional_kwargs,
     )
+    if getattr(slurm_config, "requeue", False):
+        executor.additional_parameters["requeue"] = True
+        # The nemo-run sbatch wrapper only calls `scontrol requeue` when
+        # TORCHX_MAX_RETRIES > SLURM_RESTART_COUNT.  retries=0 (the default)
+        # disables this, so bump it when requeue is requested.
+        executor.retries = max(executor.retries, 3)
     return executor
 
 
@@ -346,25 +400,64 @@ def build_docker_executor(
 
 def _git_info(path):
     """Get git commit hash and branch for a directory."""
-    import subprocess  # nosec B404
-
     try:
-        commit = subprocess.run(  # nosec B603 B607
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        branch = subprocess.run(  # nosec B603 B607
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        return commit, branch
-    except Exception:
+        worktree_dir = os.path.abspath(path)
+        while True:
+            git_path = os.path.join(worktree_dir, ".git")
+            if os.path.isdir(git_path):
+                git_dir = git_path
+                break
+            if os.path.isfile(git_path):
+                with open(git_path, encoding="utf-8") as file:
+                    marker = file.read().strip()
+                if not marker.startswith("gitdir:"):
+                    return "unknown", "unknown"
+                git_dir = marker.removeprefix("gitdir:").strip()
+                if not os.path.isabs(git_dir):
+                    git_dir = os.path.normpath(os.path.join(worktree_dir, git_dir))
+                break
+
+            parent = os.path.dirname(worktree_dir)
+            if parent == worktree_dir:
+                return "unknown", "unknown"
+            worktree_dir = parent
+
+        common_dir = git_dir
+        commondir_path = os.path.join(git_dir, "commondir")
+        if os.path.exists(commondir_path):
+            with open(commondir_path, encoding="utf-8") as file:
+                common_dir = file.read().strip()
+            if not os.path.isabs(common_dir):
+                common_dir = os.path.normpath(os.path.join(git_dir, common_dir))
+
+        with open(os.path.join(git_dir, "HEAD"), encoding="utf-8") as file:
+            head = file.read().strip()
+        if not head.startswith("ref:"):
+            return head[:7], "HEAD"
+
+        ref = head.removeprefix("ref:").strip()
+        branch = ref.removeprefix("refs/heads/")
+        commit = ""
+        for refs_dir in (git_dir, common_dir):
+            ref_path = os.path.join(refs_dir, *ref.split("/"))
+            if os.path.exists(ref_path):
+                with open(ref_path, encoding="utf-8") as file:
+                    commit = file.read().strip()
+                break
+
+        if not commit:
+            packed_refs = os.path.join(common_dir, "packed-refs")
+            if os.path.exists(packed_refs):
+                with open(packed_refs, encoding="utf-8") as file:
+                    for line in file:
+                        if line.startswith(("#", "^")):
+                            continue
+                        sha, _, packed_ref = line.strip().partition(" ")
+                        if packed_ref == ref:
+                            commit = sha
+                            break
+        return (commit[:7] if commit else "unknown"), branch
+    except OSError:
         return "unknown", "unknown"
 
 
@@ -478,6 +571,7 @@ def run_jobs(
                         job_dir,
                         task_name,
                         packager,
+                        modelopt_src_path,
                         experiment_title,
                     )
                     task_env.update(default_slurm_env)

@@ -57,7 +57,7 @@ from .plugins.mcore_custom import (
     get_safetensor,
     save_safetensors_by_layer_index,
 )
-from .plugins.megatron_importer import GPTModelImporter
+from .plugins.megatron_importer import GPTModelImporter, _get_mamba_conv1d
 from .quant_utils import (
     get_activation_scaling_factor,
     get_kv_cache_dtype,
@@ -627,7 +627,6 @@ class GPTModelExporter:
                     return mtp_state_dict
 
         if safetensors_index_file is not None and safetensors_index_file.exists():
-            print(f"Exporting MTP: using safetensors_index_file: {safetensors_index_file}")
             with open(safetensors_index_file) as f:
                 safetensors_index = json.load(f)
             model_dir = safetensors_index_file.parent
@@ -635,13 +634,16 @@ class GPTModelExporter:
                 if key.startswith("mtp.") and key not in self._state_dict:
                     mtp_state_dict[key] = get_safetensor(model_dir, key)
                     mtp_exists = True
+            if mtp_exists:
+                print(f"Exported MTP using {safetensors_index_file=}")
         elif single_safetensors_file is not None and single_safetensors_file.exists():
-            print(f"Exporting MTP: using single safetensors file: {single_safetensors_file}")
             with safe_open(str(single_safetensors_file), framework="pt", device="cpu") as f:
                 for key in f.keys():  # noqa: SIM118
                     if key.startswith("mtp.") and key not in self._state_dict:
                         mtp_state_dict[key] = f.get_tensor(key)
                         mtp_exists = True
+            if mtp_exists:
+                print(f"Exported MTP using {single_safetensors_file=}")
 
         if mtp_exists:
             self.exclude_modules.append("mtp*")
@@ -662,7 +664,7 @@ class GPTModelExporter:
         self.rules["D"](layer.mixer.D, layer_id)
         self.rules["dt_bias"](layer.mixer.dt_bias, layer_id)
 
-        self.rules["conv1d"](layer.mixer.conv1d, layer_id)
+        self.rules["conv1d"](_get_mamba_conv1d(layer.mixer), layer_id)
         self.rules["in_proj"](layer.mixer.in_proj, layer_id)
         self.rules["out_proj"](layer.mixer.out_proj, layer_id)
 

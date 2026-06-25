@@ -29,6 +29,10 @@ for i in $(env | grep ^SLURM_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMI_ | cut -d"=" -f 1); do unset -v $i; done
 for i in $(env | grep ^PMIX_ | cut -d"=" -f 1); do unset -v $i; done
 
+# Fail on errors inside pipelines (e.g. `python eval.py | tee result.txt`), otherwise a crashing
+# eval is masked by tee's exit code and the script passes silently.
+set -o pipefail
+
 if [ -z "$MODEL_PATH" ]; then
     echo "Unsupported model argument: Expected a huggingface model path or model name" >&2
     exit 1
@@ -81,6 +85,10 @@ if [ "${REMOVE_EXISTING_MODEL_CONFIG,,}" = "true" ]; then
 fi
 
 PTQ_ARGS=""
+
+if $CALIB_WITH_IMAGES; then
+    PTQ_ARGS+=" --calib_with_images "
+fi
 
 if [ "$LOW_MEMORY_MODE" = "true" ]; then
     PTQ_ARGS+=" --low_memory_mode "
@@ -216,7 +224,25 @@ if [[ $TASKS =~ "quant" ]] || [[ ! -d "$SAVE_PATH" ]] || [[ ! $(ls -A $SAVE_PATH
         RUN_ARGS+=" --trust_remote_code "
     fi
 
-    python run_tensorrt_llm.py --checkpoint_dir=$SAVE_PATH $RUN_ARGS
+    # Only run the deploy+generate smoke test when "quant" is explicitly requested. Eval tasks
+    # (lm_eval/mmlu/simple_eval) deploy the checkpoint themselves, so it is redundant there.
+    if [[ $TASKS =~ "quant" ]]; then
+        if $VLM; then
+            # VLMs use the TRT-LLM multimodal quickstart for the deploy smoke test.
+            if [ -z "$TRT_LLM_CODE_PATH" ]; then
+                TRT_LLM_CODE_PATH=/app/tensorrt_llm # default path for the TRT-LLM release docker image
+                echo "Setting default TRT_LLM_CODE_PATH to $TRT_LLM_CODE_PATH."
+            fi
+            QUICK_START_MULTIMODAL=$TRT_LLM_CODE_PATH/examples/llm-api/quickstart_multimodal.py
+            if [ -f "$QUICK_START_MULTIMODAL" ]; then
+                python3 "$QUICK_START_MULTIMODAL" --model_dir "$SAVE_PATH" --modality image
+            else
+                echo "Warning: $QUICK_START_MULTIMODAL cannot be found. Please set TRT_LLM_CODE_PATH to the TRT-LLM code path or test the quantized checkpoint $SAVE_PATH with the TRT-LLM repo directly."
+            fi
+        else
+            python run_tensorrt_llm.py --checkpoint_dir="$SAVE_PATH" $RUN_ARGS
+        fi
+    fi
 fi
 
 if [[ -d "${MODEL_PATH}" ]]; then
@@ -285,11 +311,16 @@ if [[ $TASKS =~ "mmlu" ]]; then
         tar -xf /tmp/mmlu.tar -C data && mv data/data $MMLU_DATA_PATH
     fi
 
+    mmlu_flags=""
+    if [ -n "$MMLU_LIMIT" ]; then
+        mmlu_flags+=" --limit $MMLU_LIMIT "
+    fi
+
     python mmlu.py \
         --model_name causal \
         --model_path $MODEL_ABS_PATH \
         --checkpoint_dir $SAVE_PATH \
-        --data_dir $MMLU_DATA_PATH | tee $MMLU_RESULT
+        --data_dir $MMLU_DATA_PATH $mmlu_flags | tee $MMLU_RESULT
     popd
 
 fi
@@ -304,16 +335,16 @@ if [[ $TASKS =~ "livecodebench" || $TASKS =~ "simple_eval" ]]; then
     trtllm-serve $SAVE_PATH --host 0.0.0.0 --port $PORT >$SAVE_PATH/serve.txt 2>&1 &
     SERVE_PID=$!
 
-    tail -f $SAVE_PATH/serve.txt | while read line; do
-        if echo "$line" | grep -q "Application startup complete"; then
-            echo "Application startup complete."
-            break
-        fi
+    # Poll the log instead of `tail -f | while ... break`: under `set -o pipefail` (set above),
+    # breaking out of that pipeline leaves tail to die by SIGPIPE, which would abort the script.
+    while ! grep -q "Application startup complete" $SAVE_PATH/serve.txt 2>/dev/null; do
         if ! kill -0 $SERVE_PID 2>/dev/null; then
             echo "trtllm-serve has exited."
             exit 1
         fi
+        sleep 2
     done
+    echo "Application startup complete."
 
     pushd ../llm_eval/
 

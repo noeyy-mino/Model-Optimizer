@@ -143,7 +143,7 @@ Loss balancers:
 
 ## Knowledge Distillation (KD) in NVIDIA Megatron-Bridge Framework
 
-Checkout the stand-alone distillation script in the [examples/megatron_bridge/](../megatron_bridge/README.md).
+Checkout the stand-alone distillation script in the [examples/megatron_bridge/](../megatron_bridge/README.md) for example scripts for KD with Megatron-Bridge which is generally more performant than the Hugging Face scripts.
 
 ## Knowledge Distillation (KD) in NVIDIA Megatron-LM Framework
 
@@ -174,7 +174,7 @@ accelerate launch --config-file ./accelerate_config/fsdp2.yaml \
 
 ## Resources
 
-- 📅 [Roadmap](https://github.com/NVIDIA/Model-Optimizer/issues/146)
+- 📅 [Roadmap](https://github.com/NVIDIA/Model-Optimizer/issues/1699)
 - 📖 [Documentation](https://nvidia.github.io/Model-Optimizer)
 - 🎯 [Benchmarks](../benchmark.md)
 - 💡 [Release Notes](https://nvidia.github.io/Model-Optimizer/reference/0_changelog.html)

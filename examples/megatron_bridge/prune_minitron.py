@@ -51,6 +51,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 import modelopt.torch.opt as mto
 import modelopt.torch.prune as mtp
 import modelopt.torch.utils.distributed as dist
+from modelopt.torch.export import copy_hf_ckpt_remote_code
 from modelopt.torch.utils import get_supported_datasets, print_args, print_rank_0, warn_rank_0
 from modelopt.torch.utils.plugins.mbridge import load_mbridge_model_from_hf
 from modelopt.torch.utils.plugins.megatron_calibration import get_megatron_calibration_forward_loop
@@ -255,6 +256,9 @@ def get_args() -> argparse.Namespace:
             raise ValueError("--prune_export_config must parse to a dictionary.")
         args.prune_export_config = prune_export_config
 
+    if args.inference_batch_size is None:
+        args.inference_batch_size = args.calib_batch_size
+
     print_args(args)
 
     return args
@@ -373,11 +377,7 @@ def main(args: argparse.Namespace):
         pruning_config["hparams_to_skip"] = args.hparams_to_skip
         pruning_config["top_k"] = args.top_k
         # memory_mb constraint requires batch_size and seq_length
-        pruning_config["batch_size"] = (
-            args.inference_batch_size
-            if args.inference_batch_size is not None
-            else args.calib_batch_size
-        )
+        pruning_config["batch_size"] = args.inference_batch_size
         pruning_config["seq_length"] = args.seq_length
     print_rank_0(f"Pruning constraints: {pruning_constraints}")
 
@@ -469,6 +469,8 @@ def main(args: argparse.Namespace):
             args.output_hf_path, trust_remote_code=args.trust_remote_code
         )
         pruned_bridge.save_hf_weights(model, args.output_hf_path)
+
+        copy_hf_ckpt_remote_code(args.hf_model_name_or_path, args.output_hf_path)
         print_rank_0(f"Saved pruned model to {args.output_hf_path} in HF checkpoint format")
 
     print_rank_0("Done!")

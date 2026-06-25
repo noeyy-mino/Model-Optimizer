@@ -61,6 +61,7 @@ from ...tensor_quant import (
     static_blockwise_fp4_fake_quant,
 )
 from ...utils import is_torch_export_mode
+from ...utils.numeric_utils import fp8_max_for_normalization
 from ..functional import normalized_hadamard_transform
 
 __all__ = [
@@ -172,7 +173,18 @@ class TensorQuantizer(nn.Module):
         "pre_bwd_fn",
         # quantizer cache for custom backends, like luts
         "_quantizer_cache",
+        # Runtime-only set of storage attributes tied to shared state. The tied
+        # aliases are rebuilt from calibration config and tensor state during restore.
+        "_shared_quant_tied_attrs",
     }
+
+    def __setattr__(self, name, value):
+        if name in self.__dict__.get("_shared_quant_tied_attrs", set()):
+            raise RuntimeError(
+                f"{name} is tied shared quant state; update it via the owning shared-state "
+                "object or in place (e.g. .copy_), not by reassignment on a member."
+            )
+        return super().__setattr__(name, value)
 
     def __init__(
         self,
@@ -519,6 +531,26 @@ class TensorQuantizer(nn.Module):
         )
 
     @property
+    def is_fp8(self):
+        """Check if is per-tensor FP8 E4M3 (no block scales, no per-channel axis)."""
+        return self._num_bits == (4, 3) and self._block_sizes is None and self._axis is None
+
+    @property
+    def is_nvfp4_dynamic(self):
+        """Check if is dynamic NVFP4: E2M1 with E4M3 per-block scales computed dynamically.
+
+        Mirror of ``is_nvfp4_static`` for the dynamic-scale layout; like it, this does
+        not constrain the block size. Consumers that require a specific block size
+        (e.g. the block-16 Triton kernels) check ``block_sizes[-1]`` downstream.
+        """
+        return (
+            self._block_sizes is not None
+            and self._block_sizes.get("type", None) == "dynamic"
+            and self._num_bits == (2, 1)
+            and self._block_sizes.get("scale_bits", None) == (4, 3)
+        )
+
+    @property
     def is_nvfp4_static(self):
         """True for E2M1 weights + E4M3 per-block scales in static layout (format-only check)."""
         return (
@@ -773,12 +805,20 @@ class TensorQuantizer(nn.Module):
         elif self._block_sizes.get("scale_bits") == (4, 3):
             # NVFP4 default quantization
             # Return real quantized tensor and store scales inside TensorQuantizer
+            if self._block_sizes.get("four_over_six", False):
+                raise NotImplementedError(
+                    "NVFP4 Four-Over-Six (4/6) is not supported via mtq.compress: the per-block "
+                    "M=4/M=6 choice baked into the quantizer amax by MSE calibration is not "
+                    "preserved by real quantization. Use mtq.quantize + export for 4/6 instead."
+                )
             outputs, _weights_scaling_factor, _weights_scaling_factor_2 = NVFP4QTensor.quantize(
                 inputs,
                 self._block_sizes[-1],
-                weights_scaling_factor_2=self.amax.float() / (448.0 * 6.0)
-                if self.amax is not None
-                else None,
+                weights_scaling_factor_2=(
+                    NVFP4QTensor.get_weights_scaling_factor_2_from_quantizer(self)
+                    if self.amax is not None
+                    else None
+                ),
                 try_tensorrt=True,
             )
             buffer_to_register["_scale"] = _weights_scaling_factor
@@ -1364,8 +1404,11 @@ class NVFP4StaticQuantizer(TensorQuantizer):
         if amax is not None:
             self._amax = amax.to(dtype=torch.float32)
         global_amax = getattr(self, "_global_amax", None)
-        if global_amax is not None:
-            self._global_amax = global_amax.to(dtype=torch.float32)
+        if global_amax is not None and global_amax.dtype != torch.float32:
+            if "_global_amax" in self.__dict__.get("_shared_quant_tied_attrs", set()):
+                global_amax.data = global_amax.to(dtype=torch.float32)
+            else:
+                self._global_amax = global_amax.to(dtype=torch.float32)
 
     def _amax_setter_helper(self, value):
         super()._amax_setter_helper(value)
@@ -1440,6 +1483,7 @@ class NVFP4StaticQuantizer(TensorQuantizer):
                 self.amax,
                 self.global_amax,  # Can be None, will be computed internally
                 True,  # quantize_block_scales
+                fp8_max_for_normalization(self),
                 inputs.dtype,
                 self._pass_through_bwd,
             )

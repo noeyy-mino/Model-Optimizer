@@ -238,7 +238,7 @@ def weight_attr_names(module: nn.Module) -> "Generator[str, None, None]":
     - custom per-weight quantizer (e.g. ``Llama4TextExperts`` with ``gate_up_proj`` +
       ``gate_up_proj_weight_quantizer``).
     - fused-experts ``nn.ModuleList`` quantizers (``_QuantFusedExperts`` with
-      ``gate_up_proj`` + ``gate_up_proj_weight_quantizers`` plural list).
+      ``<first_proj>`` + ``<first_proj>_weight_quantizers`` plural list).
     """
     # standard: "weight" + "weight_quantizer" (singular) or "weight_quantizers" (plural)
     if getattr(module, "weight", None) is not None:
@@ -250,10 +250,17 @@ def weight_attr_names(module: nn.Module) -> "Generator[str, None, None]":
         if name == "weight":
             continue
         weight = getattr(module, name, None)
-        if (
-            isinstance(weight, nn.Parameter)
-            and representative_weight_quantizer(module, name) is not None
+        if not isinstance(weight, nn.Parameter):
+            continue
+        if representative_weight_quantizer(module, name) is not None:
+            yield name
+        elif (
+            name == getattr(module, "_first_proj_attr", None)
+            and name != "gate_up_proj"
+            and isinstance(getattr(module, "gate_up_proj_weight_quantizers", None), nn.ModuleList)
         ):
+            # Backward compatibility for older non-gated fused-experts wrappers that
+            # kept first-projection quantizers under the gate_up_proj sentinel name.
             yield name
 
 
@@ -954,9 +961,25 @@ def promote_nvfp4_static_quantizers(model: nn.Module) -> int:
     need to be promoted so they use the two-level scaling path (global amax +
     per-block amax) instead of the generic E4M3 path.
 
+    If the quantizer belongs to a shared state with a populated ``global_amax`` inside
+    ``model``, the promoted quantizer's ``_global_amax`` buffer is tied to that canonical
+    state buffer instead of receiving an independent copy.
+
     Returns the number of quantizers converted.
     """
     from modelopt.torch.quantization.nn import NVFP4StaticQuantizer, TensorQuantizer
+    from modelopt.torch.quantization.utils.shared_input import (
+        SharedWeightGlobalAmaxState,
+        iter_shared_quant_states,
+    )
+
+    # Shared states owned within THIS promotion root. This function also runs on submodules
+    # / individual linears, so build the reverse lookup only from states reachable here.
+    shared_by_quantizer = {
+        id(quantizer): state
+        for state in iter_shared_quant_states(model, SharedWeightGlobalAmaxState)
+        for quantizer in state._member_quantizers()
+    }
 
     converted = 0
     for _name, module in list(model.named_modules()):
@@ -968,9 +991,22 @@ def promote_nvfp4_static_quantizers(model: nn.Module) -> int:
         if amax is None:
             continue
 
+        # Grouped siblings share one canonical global_amax (common FP8 grid); otherwise
+        # fall back to this quantizer's own per-block amax.
         already_promoted = isinstance(module, NVFP4StaticQuantizer)
-        global_amax = reduce_amax(amax.clone().detach(), axis=None)
-        NVFP4StaticQuantizer.from_tensor_quantizer(module, global_amax=global_amax)
+        shared = shared_by_quantizer.get(id(module))
+        if shared is not None and shared.global_amax is not None:
+            NVFP4StaticQuantizer.from_tensor_quantizer(module)
+            shared.tie_member_quantizer(module)
+        else:
+            if shared is not None and not amax.is_meta:
+                raise RuntimeError(
+                    f"{_name}: weight quantizer is in a shared group whose global_amax was not "
+                    "populated before promotion; run populate after calibration so siblings "
+                    "share one scale instead of falling back to their own."
+                )
+            global_amax = reduce_amax(amax.clone().detach(), axis=None)
+            NVFP4StaticQuantizer.from_tensor_quantizer(module, global_amax=global_amax)
         if not already_promoted:
             converted += 1
     return converted

@@ -210,6 +210,7 @@ extend-ignore = [
 "examples/*" = ["D"]
 "noxfile.py" = ["D", "E501"]
 "tests/*" = ["B017", "D", "E402", "PT012"]
+".agents/skills/*/tests/test_*.py" = ["D", "E402"] # Skill test scripts: docstring (D) + sys.path import-order (E402) exemptions
 "*/_[a-zA-Z]*" = ["D"] # Private packages (_abc/*.py) or modules (_xyz.py)
 "*.ipynb" = [
     "D",
@@ -235,6 +236,14 @@ extend-ignore = [
     "N803",
     "N806",
 ] # triton kernel style
+"modelopt/torch/kernels/quantization/attention/*" = [
+    "N803",
+    "N806",
+] # triton kernel style
+"modelopt/torch/kernels/quantization/common/*" = [
+    "N803",
+    "N806",
+] # triton kernel style
 
 [tool.ruff.lint.pycodestyle]
 max-line-length = 120 # Line length limit for comments and docstrings
@@ -252,6 +261,7 @@ split-on-trailing-comma = false
 
 [tool.mypy]
 files = "."
+python_version = "3.10"
 install_types = true
 non_interactive = true
 show_error_codes = true
@@ -282,6 +292,12 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = ["examples.*"]
 disable_error_code = ["attr-defined"]
+
+# Vendored verbatim from NVIDIA-NeMo/Automodel (Apache-2.0); kept faithful to upstream rather
+# than annotated to modelopt's strict mypy (e.g. worker-global ``X | None`` initialized lazily).
+[[tool.mypy.overrides]]
+module = ["examples.diffusers.fastgen.preprocess.*"]
+ignore_errors = true
 
 [tool.bandit]
 exclude_dirs = [".github/", "examples/", "noxfile.py", "tests/"]

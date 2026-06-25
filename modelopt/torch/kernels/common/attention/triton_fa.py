@@ -42,6 +42,8 @@ import triton.language as tl
 _apply_sparse_nm_to_qk_tile: Any = None
 _is_dense_region: Any = None
 _skip_softmax_decision: Any = None
+_p_qdq_fp8: Any = None
+_p_qdq_nvfp4: Any = None
 
 
 def _load_sparsity_helpers() -> None:
@@ -62,6 +64,20 @@ def _load_sparsity_helpers() -> None:
         _skip_softmax_decision = _skip
 
 
+def _load_p_qdq_helpers() -> None:
+    global _p_qdq_fp8, _p_qdq_nvfp4
+    if _p_qdq_fp8 is None:
+        from modelopt.torch.kernels.quantization.attention.p_qdq import _p_qdq_nvfp4 as _nvfp4
+        from modelopt.torch.kernels.quantization.common.fp8_quant import fp8_scalar_qdq as _fp8
+
+        _p_qdq_fp8 = _fp8
+        _p_qdq_nvfp4 = _nvfp4
+
+
+# Maps the public p_qdq option to the kernel's P_QDQ constexpr.
+_P_QDQ_MODES = {None: 0, "fp8": 1, "nvfp4": 2}
+
+
 LOG2E: float = 1.44269504088896
 
 # ---------------------------------------------------------------------------
@@ -80,7 +96,10 @@ if "PYTEST_VERSION" in __import__("os").environ:
     _FWD_CONFIGS = [triton.Config({"BLOCK_M": 128, "BLOCK_N": 64}, num_stages=1, num_warps=4)]
 
 _MEASURE_BLOCK_M = 128
-_MEASURE_BLOCK_N = 64
+# 128 so the kernel sparsity-measurement block matches the PyTorch
+# flash_skip_softmax calibration block (br = bc = 128) and the Triton
+# calibration kernel; otherwise the two measure at different granularities.
+_MEASURE_BLOCK_N = 128
 _MEASURE_NUM_STAGES = 1
 _MEASURE_NUM_WARPS = 4
 
@@ -243,6 +262,8 @@ def _attn_fwd(
     DENSE_RECENT_TOKENS: tl.constexpr = 64,  # Recent KV tokens kept dense (BLOCK_N-independent)
     APPLY_SKIP_SOFTMAX: tl.constexpr = False,  # Skip KV tiles with negligible scores
     SKIP_THRESHOLD_LOG2: tl.constexpr = 0.0,  # log2(lambda) in the kernel's scaled log2 score space
+    P_QDQ: tl.constexpr = 0,  # Fake quant-dequant of softmax P: 0=off, 1=FP8 E4M3, 2=NVFP4
+    p_qdq_scale=1.0,  # Per-tensor scale for softmax qdq (runtime scalar; amax/448 or amax/(6*448))
     Sparsity_total=None,  # Optional int64 scalar for counting total tiles (atomic)
     Sparsity_skipped=None,  # Optional int64 scalar for counting skipped tiles (atomic)
     MEASURE_SPARSITY: tl.constexpr = False,  # When True, count total/skipped tiles via atomic adds
@@ -363,6 +384,8 @@ def _attn_fwd(
             skip_tile = _skip_softmax_decision(
                 scores,
                 row_max,
+                q_pos,
+                seq_len_q,
                 SKIP_THRESHOLD_LOG2,
                 Sparsity_total,
                 Sparsity_skipped,
@@ -377,6 +400,14 @@ def _attn_fwd(
             correction = tl.math.exp2(row_max - m_new)
             row_sum = row_sum * correction + l_new
             acc = acc * correction[:, None]
+
+            # --- Optional softmax quant-dequant (emulates quantized P @ V) ---
+            # row_sum keeps the unquantized p: the softmax denominator stays in
+            # fp32 and only the quantized P is fed to BMM2.
+            if P_QDQ == 1:
+                p = _p_qdq_fp8(p, p_qdq_scale)
+            elif P_QDQ == 2:
+                p = _p_qdq_nvfp4(p, p_qdq_scale, BLOCK_M, BLOCK_N)
 
             # Load V and accumulate
             if IS_PAGED:
@@ -801,6 +832,8 @@ class _Attention(torch.autograd.Function):
         dense_recent_tokens,
         skip_softmax_threshold,
         measure_sparsity,
+        p_qdq_mode,
+        p_qdq_scale,
         k_cache,
         v_cache,
         block_table,
@@ -898,6 +931,8 @@ class _Attention(torch.autograd.Function):
             "DENSE_RECENT_TOKENS": dense_recent_tokens,
             "APPLY_SKIP_SOFTMAX": apply_skip,
             "SKIP_THRESHOLD_LOG2": skip_threshold_log2,
+            "P_QDQ": p_qdq_mode,
+            "p_qdq_scale": p_qdq_scale,
             "Sparsity_total": sparsity_total,
             "Sparsity_skipped": sparsity_skipped,
             "MEASURE_SPARSITY": do_measure,
@@ -919,23 +954,29 @@ class _Attention(torch.autograd.Function):
         def grid(META):
             return (batch, num_q_heads, triton.cdiv(max_input_len, META["BLOCK_M"]))
 
-        if do_measure:
-            # Runtime counters mutate global tensors, so do not run them through
-            # autotune candidate trials. Use one stable config for measurement.
-            _attn_fwd.fn[grid](
-                *fwd_args,
-                **fwd_kwargs,
-                BLOCK_M=_MEASURE_BLOCK_M,
-                BLOCK_N=_MEASURE_BLOCK_N,
-                num_warps=_MEASURE_NUM_WARPS,
-                num_stages=_MEASURE_NUM_STAGES,
-            )
-        else:
-            _attn_fwd[grid](
-                *fwd_args,
-                **fwd_kwargs,
-                # BLOCK_M, BLOCK_N, num_warps, num_stages chosen by autotune
-            )
+        # Triton launches on torch.cuda.current_device(), which is not
+        # necessarily the device the tensors live on (e.g. under accelerate
+        # device_map="auto" sharding). Activate the tensor's device so the
+        # kernel dereferences the right pointers instead of triggering an
+        # illegal memory access.
+        with torch.cuda.device(q.device):
+            if do_measure:
+                # Runtime counters mutate global tensors, so do not run them through
+                # autotune candidate trials. Use one stable config for measurement.
+                _attn_fwd.fn[grid](
+                    *fwd_args,
+                    **fwd_kwargs,
+                    BLOCK_M=_MEASURE_BLOCK_M,
+                    BLOCK_N=_MEASURE_BLOCK_N,
+                    num_warps=_MEASURE_NUM_WARPS,
+                    num_stages=_MEASURE_NUM_STAGES,
+                )
+            else:
+                _attn_fwd[grid](
+                    *fwd_args,
+                    **fwd_kwargs,
+                    # BLOCK_M, BLOCK_N, num_warps, num_stages chosen by autotune
+                )
 
         # Store sparsity counters on the output tensor for retrieval by callers
         if do_measure:
@@ -970,23 +1011,30 @@ class _Attention(torch.autograd.Function):
         do = grad_output.contiguous()
         num_warps = 4
 
+        # Triton launches on torch.cuda.current_device(), which is not
+        # necessarily the device the tensors live on (e.g. under accelerate
+        # device_map="auto" sharding). Activate the tensor's device for each
+        # launch so the kernels dereference the right pointers instead of
+        # triggering an illegal memory access.
+
         # Phase 1: delta = rowsum(O * dO)
         delta = torch.empty_like(lse)
-        _attn_bwd_preprocess[(ctx.num_q_heads, triton.cdiv(q.shape[0], BLOCK))](
-            o,
-            do,
-            delta,
-            o.stride(0),
-            o.stride(1),
-            do.stride(0),
-            do.stride(1),
-            delta.stride(0),
-            delta.stride(1),
-            q.shape[0],
-            HEAD_DIM=HEAD_DIM,
-            BLOCK_D=BLOCK_D,
-            BLOCK_M=BLOCK,
-        )
+        with torch.cuda.device(q.device):
+            _attn_bwd_preprocess[(ctx.num_q_heads, triton.cdiv(q.shape[0], BLOCK))](
+                o,
+                do,
+                delta,
+                o.stride(0),
+                o.stride(1),
+                do.stride(0),
+                do.stride(1),
+                delta.stride(0),
+                delta.stride(1),
+                q.shape[0],
+                HEAD_DIM=HEAD_DIM,
+                BLOCK_D=BLOCK_D,
+                BLOCK_M=BLOCK,
+            )
 
         dq = torch.zeros_like(q)
         dk = torch.zeros_like(k)
@@ -1016,57 +1064,59 @@ class _Attention(torch.autograd.Function):
         )
 
         # Phase 2: dK, dV
-        _attn_bwd_dkdv[(ctx.batch, ctx.num_kv_heads, triton.cdiv(ctx.max_input_len_k, BLOCK))](
-            *bwd_args[:4],
-            dk,
-            dv,
-            *bwd_args[4:],
-            dk.stride(0),
-            dk.stride(1),
-            dv.stride(0),
-            dv.stride(1),
-            lse.stride(0),
-            lse.stride(1),
-            kv_group_num=ctx.kv_group_num,
-            BLOCK_M=BLOCK,
-            BLOCK_D=BLOCK_D,
-            BLOCK_N=BLOCK,
-            IS_CAUSAL=ctx.is_causal,
-            HEAD_DIM=HEAD_DIM,
-            SPARSITY_N=ctx.sparsity_n,
-            SPARSITY_M=ctx.sparsity_m,
-            DENSE_SINK_TOKENS=ctx.dense_sink_tokens,
-            DENSE_RECENT_TOKENS=ctx.dense_recent_tokens,
-            APPLY_SKIP_SOFTMAX=ctx.apply_skip,
-            SKIP_THRESHOLD_LOG2=ctx.skip_threshold_log2,
-            num_warps=num_warps,
-            num_stages=1,
-        )
+        with torch.cuda.device(q.device):
+            _attn_bwd_dkdv[(ctx.batch, ctx.num_kv_heads, triton.cdiv(ctx.max_input_len_k, BLOCK))](
+                *bwd_args[:4],
+                dk,
+                dv,
+                *bwd_args[4:],
+                dk.stride(0),
+                dk.stride(1),
+                dv.stride(0),
+                dv.stride(1),
+                lse.stride(0),
+                lse.stride(1),
+                kv_group_num=ctx.kv_group_num,
+                BLOCK_M=BLOCK,
+                BLOCK_D=BLOCK_D,
+                BLOCK_N=BLOCK,
+                IS_CAUSAL=ctx.is_causal,
+                HEAD_DIM=HEAD_DIM,
+                SPARSITY_N=ctx.sparsity_n,
+                SPARSITY_M=ctx.sparsity_m,
+                DENSE_SINK_TOKENS=ctx.dense_sink_tokens,
+                DENSE_RECENT_TOKENS=ctx.dense_recent_tokens,
+                APPLY_SKIP_SOFTMAX=ctx.apply_skip,
+                SKIP_THRESHOLD_LOG2=ctx.skip_threshold_log2,
+                num_warps=num_warps,
+                num_stages=1,
+            )
 
         # Phase 3: dQ
-        _attn_bwd_dq[(ctx.batch, ctx.num_q_heads, triton.cdiv(ctx.max_input_len, BLOCK))](
-            *bwd_args[:4],
-            dq,
-            *bwd_args[4:],
-            dq.stride(0),
-            dq.stride(1),
-            lse.stride(0),
-            lse.stride(1),
-            kv_group_num=ctx.kv_group_num,
-            BLOCK_M=BLOCK,
-            BLOCK_D=BLOCK_D,
-            BLOCK_N=BLOCK,
-            IS_CAUSAL=ctx.is_causal,
-            HEAD_DIM=HEAD_DIM,
-            SPARSITY_N=ctx.sparsity_n,
-            SPARSITY_M=ctx.sparsity_m,
-            DENSE_SINK_TOKENS=ctx.dense_sink_tokens,
-            DENSE_RECENT_TOKENS=ctx.dense_recent_tokens,
-            APPLY_SKIP_SOFTMAX=ctx.apply_skip,
-            SKIP_THRESHOLD_LOG2=ctx.skip_threshold_log2,
-            num_warps=num_warps,
-            num_stages=1,
-        )
+        with torch.cuda.device(q.device):
+            _attn_bwd_dq[(ctx.batch, ctx.num_q_heads, triton.cdiv(ctx.max_input_len, BLOCK))](
+                *bwd_args[:4],
+                dq,
+                *bwd_args[4:],
+                dq.stride(0),
+                dq.stride(1),
+                lse.stride(0),
+                lse.stride(1),
+                kv_group_num=ctx.kv_group_num,
+                BLOCK_M=BLOCK,
+                BLOCK_D=BLOCK_D,
+                BLOCK_N=BLOCK,
+                IS_CAUSAL=ctx.is_causal,
+                HEAD_DIM=HEAD_DIM,
+                SPARSITY_N=ctx.sparsity_n,
+                SPARSITY_M=ctx.sparsity_m,
+                DENSE_SINK_TOKENS=ctx.dense_sink_tokens,
+                DENSE_RECENT_TOKENS=ctx.dense_recent_tokens,
+                APPLY_SKIP_SOFTMAX=ctx.apply_skip,
+                SKIP_THRESHOLD_LOG2=ctx.skip_threshold_log2,
+                num_warps=num_warps,
+                num_stages=1,
+            )
 
         return (
             dq,
@@ -1086,6 +1136,8 @@ class _Attention(torch.autograd.Function):
             None,  # dense_recent_tokens
             None,  # skip_softmax_threshold
             None,  # measure_sparsity
+            None,  # p_qdq_mode
+            None,  # p_qdq_scale
             None,  # k_cache
             None,  # v_cache
             None,  # block_table
@@ -1112,6 +1164,8 @@ def attention(
     dense_recent_tokens: int = 64,
     skip_softmax_threshold: float | None = None,
     measure_sparsity: bool = False,
+    p_qdq: str | None = None,
+    p_qdq_amax: float = 1.0,
     k_cache: torch.Tensor | None = None,
     v_cache: torch.Tensor | None = None,
     block_table: torch.Tensor | None = None,
@@ -1149,6 +1203,25 @@ def attention(
             and skipped tiles via atomic counters. The counts are stored as
             ``_sparsity_total`` and ``_sparsity_skipped`` attributes on the
             returned output tensor.
+        p_qdq: Fake quant-dequant of the softmax probabilities ``P``
+            before the ``P @ V`` matmul (BMM2), emulating quantized attention.
+            ``"fp8"`` round-trips P through FP8 E4M3 with a static per-tensor
+            scale (see ``p_qdq_amax``). ``"nvfp4"`` applies the two-level NVFP4
+            recipe: E2M1 elements with one FP8 E4M3 scale per 16 elements along
+            the key dimension (the BMM2 contraction axis; every autotuned
+            BLOCK_N is a multiple of 16). The softmax denominator stays
+            unquantized. The backward pass uses the straight-through estimator:
+            gradients are computed from the unquantized P, matching QAT
+            references that keep the backward dots in high precision.
+            Set to ``None`` to disable.
+        p_qdq_amax: Per-tensor amax for the softmax-P quant-dequant. The
+            kernel's unnormalized P lies in [0, 1] (the max-subtraction caps
+            every entry at ``exp2(0) = 1``), so 1 is the theoretical upper
+            bound of its amax — hence the default of 1.0. It is converted to
+            the standard per-tensor scale internally: ``amax / 448`` for FP8,
+            and the global scale ``amax / (6 * 448)`` for NVFP4. A runtime
+            scalar — user-set or calibrated values do not recompile the
+            kernel. Values above amax saturate.
         k_cache: Paged K cache [num_blocks, page_size, num_kv_heads, head_dim].
             When provided, K/V are read from paged cache via block_table
             instead of from contiguous k/v tensors.
@@ -1166,7 +1239,27 @@ def attention(
         require grad, because the saved ``k``/``v`` are dummy tensors in paged
         mode and dK/dV would be silently incorrect.
     """
+    # Both loaders must run unconditionally: Triton computes a kernel's
+    # dependency hash once, on the first call, walking the full AST. If the
+    # qdq helpers were still None at that point, their source would be
+    # permanently excluded from the cache key and later edits to them would
+    # silently reuse stale compiled kernels from the on-disk cache.
     _load_sparsity_helpers()
+    _load_p_qdq_helpers()
+    if p_qdq not in _P_QDQ_MODES:
+        raise ValueError(
+            f"p_qdq must be one of {sorted(k for k in _P_QDQ_MODES if k)} or None, got {p_qdq!r}"
+        )
+    p_qdq_mode = _P_QDQ_MODES[p_qdq]
+    # Convert the per-tensor amax to the kernel's scale convention
+    # (``q = cast(p / scale) * scale``): FP8 uses ``amax / 448``; NVFP4 uses the
+    # global scale ``amax / (6 * 448)``. amax=1 (the default, the theoretical
+    # upper bound of P's amax) therefore maps to the standard full-range scale.
+    p_qdq_scale = 1.0
+    if p_qdq_mode:
+        if not (math.isfinite(p_qdq_amax) and p_qdq_amax > 0):
+            raise ValueError(f"p_qdq_amax must be a finite positive value, got {p_qdq_amax}")
+        p_qdq_scale = p_qdq_amax / 448.0 if p_qdq == "fp8" else p_qdq_amax / (6.0 * 448.0)
     sm_scale = 1.0 / (q.shape[2] ** 0.5) if softmax_scale is None else softmax_scale
     return _Attention.apply(
         q,
@@ -1186,6 +1279,8 @@ def attention(
         dense_recent_tokens,
         skip_softmax_threshold,
         measure_sparsity,
+        p_qdq_mode,
+        p_qdq_scale,
         k_cache,
         v_cache,
         block_table,
