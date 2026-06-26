@@ -759,3 +759,18 @@ def test_nvidia_nemotron_3_ultra_550b_a55b_bf16(command):
 )
 def test_nvidia_nemotron_3_ultra_550b_a55b_genrm(command):
     command.run()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        *ModelDeployerList(
+            model_id="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-Base-BF16",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=8,
+        ),
+    ],
+    ids=idfn,
+)
+def test_nvidia_nemotron_3_ultra_550b_a55b_base_bf16(command):
+    command.run()
