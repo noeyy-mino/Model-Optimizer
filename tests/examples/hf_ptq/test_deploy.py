@@ -398,6 +398,12 @@ def test_phi(command):
             backend=("trtllm", "vllm", "sglang"),
             tensor_parallel_size=8,
         ),
+        *ModelDeployerList(
+            model_id="nvidia/Kimi-K2.7-Code-NVFP4",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=8,
+            mini_sm=100,
+        ),
     ],
     ids=idfn,
 )
