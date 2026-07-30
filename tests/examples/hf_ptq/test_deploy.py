@@ -471,6 +471,7 @@ def test_glm(command):
             backend=("trtllm", "vllm", "sglang"),
             tensor_parallel_size=4,
             mini_sm=100,
+            block_size=128,
         ),
     ],
     ids=idfn,

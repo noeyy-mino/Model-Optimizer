@@ -225,6 +225,7 @@ class ModelDeployer:
         attn_backend: str = "TRTLLM",
         base_model: str = "",
         eagle3_one_model: bool = True,
+        block_size: int = 16,
     ):
         """
         Initialize the ModelDeployer.
@@ -235,6 +236,7 @@ class ModelDeployer:
             tensor_parallel_size: Tensor parallel size for distributed inference
             mini_sm: Minimum SM (Streaming Multiprocessor) requirement for the model
             attn_backend: is for TRT LLM deployment
+            block_size: KV cache block size for vLLM (default 16; some models require 128)
         """
         self.backend = backend
         self.model_id = model_id
@@ -243,6 +245,7 @@ class ModelDeployer:
         self.attn_backend = attn_backend
         self.base_model = base_model
         self.eagle3_one_model = eagle3_one_model
+        self.block_size = block_size
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -382,6 +385,8 @@ class ModelDeployer:
             vllm_kwargs = {}
             if self.attn_backend and self.attn_backend != "TRTLLM":
                 vllm_kwargs["attention_backend"] = self.attn_backend
+            if self.block_size != 16:
+                vllm_kwargs["block_size"] = self.block_size
             llm = LLM(
                 model=self.model_id,
                 quantization=quantization_method,
