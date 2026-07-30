@@ -379,6 +379,9 @@ class ModelDeployer:
                 quantization_method = "modelopt_fp4"
             # DeepSeek-V4 FlashMLA requires fp8 kv-cache explicitly
             kv_cache_dtype = "fp8" if "deepseek-v4" in self.model_id.lower() else "auto"
+            vllm_kwargs = {}
+            if self.attn_backend and self.attn_backend != "TRTLLM":
+                vllm_kwargs["attention_backend"] = self.attn_backend
             llm = LLM(
                 model=self.model_id,
                 quantization=quantization_method,
@@ -386,10 +389,11 @@ class ModelDeployer:
                 trust_remote_code=True,
                 max_model_len=4096,
                 kv_cache_dtype=kv_cache_dtype,
+                **vllm_kwargs,
             )
         sampling_params = SamplingParams(temperature=0.8, top_p=0.9)
         conversations = [[{"role": "user", "content": p}] for p in COMMON_PROMPTS]
-        outputs = llm.chat(conversations, sampling_params)
+        outputs = llm.chat(conversations, sampling_params, use_tqdm=False)
 
         assert len(outputs) == len(COMMON_PROMPTS), (
             f"Expected {len(COMMON_PROMPTS)} outputs, got {len(outputs)}"
