@@ -148,6 +148,7 @@ def _run_deploy_via_subprocess(
     attn_backend: str,
     base_model: str,
     eagle3_one_model: bool,
+    extra_env: dict | None = None,
 ) -> None:
     """Run deploy in a subprocess and print its stdout/stderr so pytest capture=tee-sys captures to DB."""
     tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -155,6 +156,7 @@ def _run_deploy_via_subprocess(
     env = {
         **os.environ,
         "PYTHONPATH": project_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
+        **(extra_env or {}),
     }
     code = f"""import sys
 sys.path.insert(0, {tests_dir!r})
@@ -226,6 +228,7 @@ class ModelDeployer:
         base_model: str = "",
         eagle3_one_model: bool = True,
         block_size: int = 16,
+        extra_env: dict | None = None,
     ):
         """
         Initialize the ModelDeployer.
@@ -237,6 +240,7 @@ class ModelDeployer:
             mini_sm: Minimum SM (Streaming Multiprocessor) requirement for the model
             attn_backend: is for TRT LLM deployment
             block_size: KV cache block size for vLLM (default 16; some models require 128)
+            extra_env: extra environment variables to set in the deploy subprocess
         """
         self.backend = backend
         self.model_id = model_id
@@ -246,6 +250,7 @@ class ModelDeployer:
         self.base_model = base_model
         self.eagle3_one_model = eagle3_one_model
         self.block_size = block_size
+        self.extra_env = extra_env or {}
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -275,6 +280,7 @@ class ModelDeployer:
                 attn_backend=self.attn_backend,
                 base_model=self.base_model,
                 eagle3_one_model=self.eagle3_one_model,
+                extra_env=self.extra_env,
             )
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
