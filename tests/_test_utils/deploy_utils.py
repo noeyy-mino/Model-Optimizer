@@ -98,6 +98,7 @@ def _run_vllm_deploy(
     base_model: str,
     eagle3_one_model: bool,
     block_size: int = 16,
+    vllm_quantization: str | None = "auto",
 ) -> None:
     """Top-level entry for subprocess: run vLLM deploy in a child process."""
     try:
@@ -110,6 +111,7 @@ def _run_vllm_deploy(
             base_model=base_model,
             eagle3_one_model=eagle3_one_model,
             block_size=block_size,
+            vllm_quantization=vllm_quantization,
         )
         deployer._deploy_vllm_impl()
     except Exception:
@@ -152,6 +154,7 @@ def _run_deploy_via_subprocess(
     eagle3_one_model: bool,
     block_size: int = 16,
     extra_env: dict | None = None,
+    vllm_quantization: str | None = "auto",
 ) -> None:
     """Run deploy in a subprocess and print its stdout/stderr so pytest capture=tee-sys captures to DB."""
     tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -166,7 +169,7 @@ sys.path.insert(0, {tests_dir!r})
 if __name__ == '__main__':
     from _test_utils.deploy_utils import _run_{backend}_deploy
     _run_{backend}_deploy(
-        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}
+        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}
     )
 """
     if backend == "trtllm":
@@ -232,6 +235,7 @@ class ModelDeployer:
         eagle3_one_model: bool = True,
         block_size: int = 16,
         extra_env: dict | None = None,
+        vllm_quantization: str | None = "auto",
     ):
         """
         Initialize the ModelDeployer.
@@ -244,6 +248,8 @@ class ModelDeployer:
             attn_backend: is for TRT LLM deployment
             block_size: KV cache block size for vLLM (default 16; some models require 128)
             extra_env: extra environment variables to set in the deploy subprocess
+            vllm_quantization: override vLLM quantization; "auto" uses name-based detection,
+                None lets vLLM auto-detect from model config
         """
         self.backend = backend
         self.model_id = model_id
@@ -254,6 +260,7 @@ class ModelDeployer:
         self.eagle3_one_model = eagle3_one_model
         self.block_size = block_size
         self.extra_env = extra_env or {}
+        self.vllm_quantization = vllm_quantization
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -285,6 +292,7 @@ class ModelDeployer:
                 eagle3_one_model=self.eagle3_one_model,
                 block_size=self.block_size,
                 extra_env=self.extra_env,
+                vllm_quantization=self.vllm_quantization,
             )
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
@@ -387,9 +395,12 @@ class ModelDeployer:
                 max_model_len=4096,
             )
         else:
-            quantization_method = "modelopt"
-            if "fp4" in self.model_id.lower():
-                quantization_method = "modelopt_fp4"
+            if self.vllm_quantization == "auto":
+                quantization_method = "modelopt"
+                if "fp4" in self.model_id.lower():
+                    quantization_method = "modelopt_fp4"
+            else:
+                quantization_method = self.vllm_quantization
             # DeepSeek-V4 FlashMLA requires fp8 kv-cache explicitly
             kv_cache_dtype = "fp8" if "deepseek-v4" in self.model_id.lower() else "auto"
             vllm_kwargs = {}
@@ -397,9 +408,10 @@ class ModelDeployer:
                 vllm_kwargs["attention_backend"] = self.attn_backend
             if self.block_size != 16:
                 vllm_kwargs["block_size"] = self.block_size
+            llm_kwargs = {"quantization": quantization_method} if quantization_method else {}
             llm = LLM(
                 model=self.model_id,
-                quantization=quantization_method,
+                **llm_kwargs,
                 tensor_parallel_size=self.tensor_parallel_size,
                 trust_remote_code=True,
                 max_model_len=4096,
