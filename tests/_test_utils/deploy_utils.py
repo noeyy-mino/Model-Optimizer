@@ -99,6 +99,8 @@ def _run_vllm_deploy(
     eagle3_one_model: bool,
     block_size: int = 16,
     vllm_quantization: str | None = "auto",
+    max_model_len: int = 4096,
+    vllm_extra_kwargs: dict | None = None,
 ) -> None:
     """Top-level entry for subprocess: run vLLM deploy in a child process."""
     try:
@@ -112,6 +114,8 @@ def _run_vllm_deploy(
             eagle3_one_model=eagle3_one_model,
             block_size=block_size,
             vllm_quantization=vllm_quantization,
+            max_model_len=max_model_len,
+            vllm_extra_kwargs=vllm_extra_kwargs,
         )
         deployer._deploy_vllm_impl()
     except Exception:
@@ -155,6 +159,8 @@ def _run_deploy_via_subprocess(
     block_size: int = 16,
     extra_env: dict | None = None,
     vllm_quantization: str | None = "auto",
+    max_model_len: int = 4096,
+    vllm_extra_kwargs: dict | None = None,
 ) -> None:
     """Run deploy in a subprocess and print its stdout/stderr so pytest capture=tee-sys captures to DB."""
     tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -169,7 +175,7 @@ sys.path.insert(0, {tests_dir!r})
 if __name__ == '__main__':
     from _test_utils.deploy_utils import _run_{backend}_deploy
     _run_{backend}_deploy(
-        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}
+        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}
     )
 """
     if backend == "trtllm":
@@ -236,6 +242,8 @@ class ModelDeployer:
         block_size: int = 16,
         extra_env: dict | None = None,
         vllm_quantization: str | None = "auto",
+        max_model_len: int = 4096,
+        vllm_extra_kwargs: dict | None = None,
     ):
         """
         Initialize the ModelDeployer.
@@ -250,6 +258,8 @@ class ModelDeployer:
             extra_env: extra environment variables to set in the deploy subprocess
             vllm_quantization: override vLLM quantization; "auto" uses name-based detection,
                 None lets vLLM auto-detect from model config
+            max_model_len: max model context length for vLLM (default 4096)
+            vllm_extra_kwargs: additional kwargs forwarded directly to vllm.LLM()
         """
         self.backend = backend
         self.model_id = model_id
@@ -261,6 +271,8 @@ class ModelDeployer:
         self.block_size = block_size
         self.extra_env = extra_env or {}
         self.vllm_quantization = vllm_quantization
+        self.max_model_len = max_model_len
+        self.vllm_extra_kwargs = vllm_extra_kwargs or {}
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -293,6 +305,8 @@ class ModelDeployer:
                 block_size=self.block_size,
                 extra_env=self.extra_env,
                 vllm_quantization=self.vllm_quantization,
+                max_model_len=self.max_model_len,
+                vllm_extra_kwargs=self.vllm_extra_kwargs,
             )
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
@@ -414,9 +428,10 @@ class ModelDeployer:
                 **llm_kwargs,
                 tensor_parallel_size=self.tensor_parallel_size,
                 trust_remote_code=True,
-                max_model_len=4096,
+                max_model_len=self.max_model_len,
                 kv_cache_dtype=kv_cache_dtype,
                 **vllm_kwargs,
+                **self.vllm_extra_kwargs,
             )
         sampling_params = SamplingParams(temperature=0.8, top_p=0.9)
         conversations = [[{"role": "user", "content": p}] for p in COMMON_PROMPTS]

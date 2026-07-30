@@ -805,6 +805,12 @@ def test_nvidia_nemotron_3_ultra_550b_a55b_base_bf16(command):
             backend=("vllm",),
             tensor_parallel_size=4,
             mini_sm=100,
+            max_model_len=196608,
+            vllm_extra_kwargs={
+                "gpu_memory_utilization": 0.9,
+                "config_format": "hf",
+                "dtype": "auto",
+            },
         ),
     ],
     ids=idfn,
