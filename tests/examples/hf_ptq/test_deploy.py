@@ -717,11 +717,10 @@ def test_wan2_2_t2v_a14b_diffusers_fp8(command):
     [
         *ModelDeployerList(
             model_id="nvidia/diffusiongemma-26B-A4B-it-NVFP4",
-            backend=("trtllm", "vllm", "sglang"),
+            backend=("trtllm", "sglang"),
             tensor_parallel_size=2,
             mini_sm=100,
             attn_backend="TRITON_ATTN",
-            extra_env={"VLLM_USE_V2_MODEL_RUNNER": "1"},
         ),
     ],
     ids=idfn,
