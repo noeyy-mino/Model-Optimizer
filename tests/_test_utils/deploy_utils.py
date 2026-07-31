@@ -278,7 +278,7 @@ class ModelDeployer:
         self.vllm_quantization = vllm_quantization
         self.max_model_len = max_model_len
         self.vllm_extra_kwargs = vllm_extra_kwargs or {}
-        self.vllm_sampling_kwargs = vllm_sampling_kwargs or {}
+        self.vllm_sampling_kwargs = vllm_sampling_kwargs  # None = use defaults; {} = no params
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -440,8 +440,10 @@ class ModelDeployer:
                 **vllm_kwargs,
                 **self.vllm_extra_kwargs,
             )
-        default_sampling = {"temperature": 0.8, "top_p": 0.9}
-        sampling_params = SamplingParams(**{**default_sampling, **self.vllm_sampling_kwargs})
+        if self.vllm_sampling_kwargs is not None:
+            sampling_params = SamplingParams(**self.vllm_sampling_kwargs)
+        else:
+            sampling_params = SamplingParams(temperature=0.8, top_p=0.9)
         conversations = [[{"role": "user", "content": p}] for p in COMMON_PROMPTS]
         outputs = llm.chat(conversations, sampling_params, use_tqdm=False)
 
