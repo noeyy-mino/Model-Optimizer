@@ -721,6 +721,7 @@ def test_wan2_2_t2v_a14b_diffusers_fp8(command):
             tensor_parallel_size=2,
             mini_sm=100,
             attn_backend="TRITON_ATTN",
+            vllm_sampling_kwargs={},
         ),
     ],
     ids=idfn,
