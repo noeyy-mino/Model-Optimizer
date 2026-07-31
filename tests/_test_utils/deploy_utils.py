@@ -102,6 +102,7 @@ def _run_vllm_deploy(
     max_model_len: int = 4096,
     vllm_extra_kwargs: dict | None = None,
     vllm_sampling_kwargs: dict | None = None,
+    allow_empty_output: bool = False,
 ) -> None:
     """Top-level entry for subprocess: run vLLM deploy in a child process."""
     try:
@@ -118,6 +119,7 @@ def _run_vllm_deploy(
             max_model_len=max_model_len,
             vllm_extra_kwargs=vllm_extra_kwargs,
             vllm_sampling_kwargs=vllm_sampling_kwargs,
+            allow_empty_output=allow_empty_output,
         )
         deployer._deploy_vllm_impl()
     except Exception:
@@ -164,6 +166,7 @@ def _run_deploy_via_subprocess(
     max_model_len: int = 4096,
     vllm_extra_kwargs: dict | None = None,
     vllm_sampling_kwargs: dict | None = None,
+    allow_empty_output: bool = False,
 ) -> None:
     """Run deploy in a subprocess and print its stdout/stderr so pytest capture=tee-sys captures to DB."""
     tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -178,7 +181,7 @@ sys.path.insert(0, {tests_dir!r})
 if __name__ == '__main__':
     from _test_utils.deploy_utils import _run_{backend}_deploy
     _run_{backend}_deploy(
-        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}, {vllm_sampling_kwargs!r}
+        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}, {vllm_sampling_kwargs!r}, {allow_empty_output!r}
     )
 """
     if backend == "trtllm":
@@ -248,6 +251,7 @@ class ModelDeployer:
         max_model_len: int = 4096,
         vllm_extra_kwargs: dict | None = None,
         vllm_sampling_kwargs: dict | None = None,
+        allow_empty_output: bool = False,
     ):
         """
         Initialize the ModelDeployer.
@@ -264,7 +268,8 @@ class ModelDeployer:
                 None lets vLLM auto-detect from model config
             max_model_len: max model context length for vLLM (default 4096)
             vllm_extra_kwargs: additional kwargs forwarded directly to vllm.LLM()
-            vllm_sampling_kwargs: overrides for SamplingParams (merged over defaults)
+            vllm_sampling_kwargs: overrides for SamplingParams (None=use defaults, {}=no params)
+            allow_empty_output: skip non-empty assertion (for diffusion models)
         """
         self.backend = backend
         self.model_id = model_id
@@ -279,6 +284,7 @@ class ModelDeployer:
         self.max_model_len = max_model_len
         self.vllm_extra_kwargs = vllm_extra_kwargs or {}
         self.vllm_sampling_kwargs = vllm_sampling_kwargs  # None = use defaults; {} = no params
+        self.allow_empty_output = allow_empty_output
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -314,6 +320,7 @@ class ModelDeployer:
                 max_model_len=self.max_model_len,
                 vllm_extra_kwargs=self.vllm_extra_kwargs,
                 vllm_sampling_kwargs=self.vllm_sampling_kwargs,
+                allow_empty_output=self.allow_empty_output,
             )
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
@@ -457,7 +464,8 @@ class ModelDeployer:
             assert hasattr(output.outputs[0], "text"), f"Output {i} missing 'text' attribute"
             assert isinstance(output.outputs[0].text, str), f"Output {i} text is not a string"
             generated_text = output.outputs[0].text
-            assert generated_text.strip(), f"Output {i} generated empty text"
+            if not self.allow_empty_output:
+                assert generated_text.strip(), f"Output {i} generated empty text"
 
             print(f"Model: {self.model_id}")
             print(f"Input prompt: {COMMON_PROMPTS[i]!r}")
