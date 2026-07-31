@@ -103,6 +103,7 @@ def _run_vllm_deploy(
     vllm_extra_kwargs: dict | None = None,
     vllm_sampling_kwargs: dict | None = None,
     allow_empty_output: bool = False,
+    vllm_chat_kwargs: dict | None = None,
 ) -> None:
     """Top-level entry for subprocess: run vLLM deploy in a child process."""
     try:
@@ -120,6 +121,7 @@ def _run_vllm_deploy(
             vllm_extra_kwargs=vllm_extra_kwargs,
             vllm_sampling_kwargs=vllm_sampling_kwargs,
             allow_empty_output=allow_empty_output,
+            vllm_chat_kwargs=vllm_chat_kwargs,
         )
         deployer._deploy_vllm_impl()
     except Exception:
@@ -167,6 +169,7 @@ def _run_deploy_via_subprocess(
     vllm_extra_kwargs: dict | None = None,
     vllm_sampling_kwargs: dict | None = None,
     allow_empty_output: bool = False,
+    vllm_chat_kwargs: dict | None = None,
 ) -> None:
     """Run deploy in a subprocess and print its stdout/stderr so pytest capture=tee-sys captures to DB."""
     tests_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -181,7 +184,7 @@ sys.path.insert(0, {tests_dir!r})
 if __name__ == '__main__':
     from _test_utils.deploy_utils import _run_{backend}_deploy
     _run_{backend}_deploy(
-        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}, {vllm_sampling_kwargs!r}, {allow_empty_output!r}
+        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}, {vllm_sampling_kwargs!r}, {allow_empty_output!r}, {vllm_chat_kwargs!r}
     )
 """
     if backend == "trtllm":
@@ -252,6 +255,7 @@ class ModelDeployer:
         vllm_extra_kwargs: dict | None = None,
         vllm_sampling_kwargs: dict | None = None,
         allow_empty_output: bool = False,
+        vllm_chat_kwargs: dict | None = None,
     ):
         """
         Initialize the ModelDeployer.
@@ -285,6 +289,7 @@ class ModelDeployer:
         self.vllm_extra_kwargs = vllm_extra_kwargs or {}
         self.vllm_sampling_kwargs = vllm_sampling_kwargs  # None = use defaults; {} = no params
         self.allow_empty_output = allow_empty_output
+        self.vllm_chat_kwargs = vllm_chat_kwargs or {}
 
     def run(self):
         """Run the deployment based on the specified backend."""
@@ -321,6 +326,7 @@ class ModelDeployer:
                 vllm_extra_kwargs=self.vllm_extra_kwargs,
                 vllm_sampling_kwargs=self.vllm_sampling_kwargs,
                 allow_empty_output=self.allow_empty_output,
+                vllm_chat_kwargs=self.vllm_chat_kwargs,
             )
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
@@ -452,7 +458,7 @@ class ModelDeployer:
         else:
             sampling_params = SamplingParams(temperature=0.8, top_p=0.9)
         conversations = [[{"role": "user", "content": p}] for p in COMMON_PROMPTS]
-        outputs = llm.chat(conversations, sampling_params, use_tqdm=False)
+        outputs = llm.chat(conversations, sampling_params, use_tqdm=False, **self.vllm_chat_kwargs)
 
         assert len(outputs) == len(COMMON_PROMPTS), (
             f"Expected {len(COMMON_PROMPTS)} outputs, got {len(outputs)}"
