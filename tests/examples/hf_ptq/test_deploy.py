@@ -724,9 +724,6 @@ def test_wan2_2_t2v_a14b_diffusers_fp8(command):
             extra_env={"VLLM_USE_V2_MODEL_RUNNER": "1"},
             vllm_extra_kwargs={
                 "max_num_seqs": 4,
-                "enable_auto_tool_choice": True,
-                "tool_call_parser": "gemma4",
-                "reasoning_parser": "gemma4",
                 "override_generation_config": {"max_new_tokens": None},
             },
             vllm_sampling_kwargs={},
