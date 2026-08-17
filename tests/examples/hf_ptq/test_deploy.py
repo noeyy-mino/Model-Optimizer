@@ -416,6 +416,12 @@ def test_phi(command):
             tensor_parallel_size=8,
             mini_sm=100,
         ),
+        *ModelDeployerList(
+            model_id="nvidia/Kimi-K3-NVFP4",
+            backend=("vllm",),
+            tensor_parallel_size=8,
+            mini_sm=100,
+        ),
     ],
     ids=idfn,
 )
