@@ -848,3 +848,19 @@ def test_nvidia_nemotron_3_ultra_550b_a55b_base_bf16(command):
 )
 def test_mistral(command):
     command.run()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        *ModelDeployerList(
+            model_id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark",
+            backend=("vllm",),
+            tensor_parallel_size=2,
+            mini_sm=100,
+        ),
+    ],
+    ids=idfn,
+)
+def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4_dspark(command):
+    command.run()
