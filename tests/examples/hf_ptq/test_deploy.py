@@ -119,6 +119,12 @@ def cleanup_after_test():
             tensor_parallel_size=8,
             mini_sm=100,
         ),
+        *ModelDeployerList(
+            model_id="nvidia/DeepSeek-V4-Pro-nvfp4-DSpark",
+            backend=("vllm",),
+            tensor_parallel_size=8,
+            mini_sm=100,
+        ),
     ],
     ids=idfn,
 )
