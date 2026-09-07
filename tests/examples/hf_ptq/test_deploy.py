@@ -880,3 +880,19 @@ def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4_dspark(command):
 )
 def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4_dflash(command):
     command.run()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        *ModelDeployerList(
+            model_id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+            backend=("trtllm", "vllm", "sglang"),
+            tensor_parallel_size=2,
+            mini_sm=100,
+        ),
+    ],
+    ids=idfn,
+)
+def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4(command):
+    command.run()
