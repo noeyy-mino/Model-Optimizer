@@ -179,13 +179,29 @@ def _run_deploy_via_subprocess(
         "PYTHONPATH": project_root + os.pathsep + os.environ.get("PYTHONPATH", ""),
         **(extra_env or {}),
     }
+    deploy_args = (
+        model_id,
+        tensor_parallel_size,
+        mini_sm,
+        attn_backend,
+        base_model,
+        eagle3_one_model,
+    )
+    if backend == "vllm":
+        deploy_args += (
+            block_size,
+            vllm_quantization,
+            max_model_len,
+            vllm_extra_kwargs,
+            vllm_sampling_kwargs,
+            allow_empty_output,
+            vllm_chat_kwargs,
+        )
     code = f"""import sys
 sys.path.insert(0, {tests_dir!r})
 if __name__ == '__main__':
     from _test_utils.deploy_utils import _run_{backend}_deploy
-    _run_{backend}_deploy(
-        {model_id!r}, {tensor_parallel_size}, {mini_sm}, {attn_backend!r}, {base_model!r}, {eagle3_one_model}, {block_size}, {vllm_quantization!r}, {max_model_len}, {vllm_extra_kwargs!r}, {vllm_sampling_kwargs!r}, {allow_empty_output!r}, {vllm_chat_kwargs!r}
-    )
+    _run_{backend}_deploy(*{deploy_args!r})
 """
     if backend == "trtllm":
         mpirun = os.environ.get("MPIRUN", "mpirun")
