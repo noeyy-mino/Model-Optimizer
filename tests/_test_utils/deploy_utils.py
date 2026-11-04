@@ -304,10 +304,14 @@ class ModelDeployer:
         }
 
         if "eagle" in self.model_id.lower():
+            # Newer TRT-LLM removed `eagle3_one_model` (Eagle3 is always one-model).
+            eagle_kw = {}
+            if "eagle3_one_model" in EagleDecodingConfig.model_fields:
+                eagle_kw["eagle3_one_model"] = self.eagle3_one_model
             spec_config = EagleDecodingConfig(
                 max_draft_len=3,
                 speculative_model_dir=self.model_id,
-                eagle3_one_model=self.eagle3_one_model,
+                **eagle_kw,
             )
             llm = LLM(
                 model=self.base_model,
