@@ -1,0 +1,557 @@
+[
+  {
+    "model_id": "nvidia/DeepSeek-V4.1-Flash-1017-NVFP4",
+    "backend": "vllm",
+    "gpu_count": 4,
+    "min_sm": 100,
+    "runtime": "vLLM v0.31.0 with MXFP4 Engram PR #61530",
+    "sources": [
+      "https://huggingface.co/nvidia/DeepSeek-V4.1-Flash-1017-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--tokenizer-mode",
+      "deepseek_v41",
+      "--attention-config",
+      "{\"backend\":\"FLASHINFER_MLA_SPARSE_DSV41\",\"indexer_kv_dtype\":\"mxfp4\",\"indexer_sparse_logits\":true}",
+      "--kv-cache-dtype",
+      "fp8",
+      "--engram-config",
+      "{\"cpu_offload\":true}",
+      "--reasoning-parser",
+      "deepseek_v41",
+      "--max-model-len",
+      "4096",
+      "--max-num-seqs",
+      "4"
+    ],
+    "environment": {
+      "VLLM_ENGINE_READY_TIMEOUT_S": "3600"
+    }
+  },
+  {
+    "model_id": "nvidia/DeepSeek-V4.1-Flash-1017-NVFP4",
+    "backend": "sglang",
+    "gpu_count": 4,
+    "min_sm": 100,
+    "runtime": "SGLang with PR #47935 (2026-11-04 or newer)",
+    "sources": [
+      "https://huggingface.co/nvidia/DeepSeek-V4.1-Flash-1017-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--dsv4-attn-backend",
+      "flashmla",
+      "--mem-fraction-static",
+      "0.9",
+      "--speculative-algorithm",
+      "DSPARK",
+      "--speculative-dspark-block-size",
+      "5",
+      "--engram-config",
+      "{\"placement\":\"cpu\",\"replication\":\"none\",\"lookup\":\"auto\"}",
+      "--reasoning-parser",
+      "auto",
+      "--context-length",
+      "4096",
+      "--max-running-requests",
+      "4"
+    ]
+  },
+  {
+    "model_id": "nvidia/Muse-Spark-Open-816B-A42B-DFlash2",
+    "backend": "vllm",
+    "gpu_count": 4,
+    "min_sm": 100,
+    "runtime": "vLLM build with Muse Spark Open and DFlash2 probabilistic drafting support",
+    "sources": [
+      "https://huggingface.co/nvidia/Muse-Spark-Open-816B-A42B-DFlash2"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--enable-expert-parallel",
+      "--speculative-config",
+      "{\"method\":\"dflash\",\"model\":\"{draft}\",\"num_speculative_tokens\":7,\"draft_sample_method\":\"probabilistic\"}",
+      "--max-model-len",
+      "4096",
+      "--max-num-seqs",
+      "4"
+    ],
+    "target_model": "meta-models/Muse-Spark-Open-816B-A42B",
+    "draft_model": "nvidia/Muse-Spark-Open-816B-A42B-DFlash2"
+  },
+  {
+    "model_id": "nvidia/Muse-Spark-Open-816B-A42B-DFlash2",
+    "backend": "sglang",
+    "gpu_count": 4,
+    "min_sm": 100,
+    "runtime": "lmsysorg/sglang:dev-muse-spark-open",
+    "sources": [
+      "https://huggingface.co/nvidia/Muse-Spark-Open-816B-A42B-DFlash2"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--quantization",
+      "modelopt_fp4",
+      "--moe-runner-backend",
+      "flashinfer_trtllm",
+      "--ep-size",
+      "4",
+      "--attention-backend",
+      "trtllm_mha",
+      "--page-size",
+      "128",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--mem-fraction-static",
+      "0.8",
+      "--reasoning-parser",
+      "muse",
+      "--enable-layernorm-sp",
+      "--enable-megamoe-for-layernorm-sp",
+      "--speculative-algorithm",
+      "DFLASH",
+      "--speculative-draft-model-path",
+      "{draft}",
+      "--speculative-draft-attention-backend",
+      "fa4",
+      "--speculative-num-draft-tokens",
+      "8",
+      "--context-length",
+      "4096",
+      "--max-running-requests",
+      "4"
+    ],
+    "target_model": "meta-models/Muse-Spark-Open-816B-A42B-NVFP4",
+    "draft_model": "nvidia/Muse-Spark-Open-816B-A42B-DFlash2"
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+    "backend": "vllm",
+    "gpu_count": 4,
+    "min_sm": 90,
+    "runtime": "vllm/vllm-openai:v0.32.0 or nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--async-scheduling",
+      "--enable-mamba-shared-prefix-checkpoint",
+      "--limit-mm-per-prompt",
+      "{\"video\":1,\"image\":1}",
+      "--reasoning-parser",
+      "nemotron_v3",
+      "--speculative-config",
+      "{\"method\":\"mtp\",\"num_speculative_tokens\":5}",
+      "--max-model-len",
+      "4096",
+      "--max-num-seqs",
+      "4"
+    ]
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+    "backend": "sglang",
+    "gpu_count": 4,
+    "min_sm": 90,
+    "runtime": "lmsysorg/sglang:nemotron3-5-super",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--attention-backend",
+      "flashinfer",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-dtype",
+      "bfloat16",
+      "--enable-mamba-cache-stochastic-rounding",
+      "--mamba-cache-philox-rounds",
+      "5",
+      "--mamba-radix-cache-strategy",
+      "extra_buffer",
+      "--reasoning-parser",
+      "nemotron_3",
+      "--context-length",
+      "4096",
+      "--max-running-requests",
+      "4",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-num-steps",
+      "5",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6"
+    ]
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "backend": "vllm",
+    "gpu_count": 2,
+    "min_sm": 90,
+    "runtime": "vllm/vllm-openai:v0.32.0 or nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--gpu-memory-utilization",
+      "0.89",
+      "--max-num-batched-tokens",
+      "16384",
+      "--block-size",
+      "64",
+      "--prefix-match-unit",
+      "64",
+      "--mamba-cache-mode",
+      "align",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-cache-dtype",
+      "float16",
+      "--enable-mamba-cache-stochastic-rounding",
+      "--mamba-cache-philox-rounds",
+      "5",
+      "--enable-mamba-shared-prefix-checkpoint",
+      "--reasoning-parser",
+      "nemotron_v3",
+      "--speculative-config",
+      "{\"method\":\"mtp\",\"num_speculative_tokens\":3}",
+      "--max-model-len",
+      "4096",
+      "--max-num-seqs",
+      "4"
+    ]
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "backend": "sglang",
+    "gpu_count": 2,
+    "min_sm": 90,
+    "runtime": "lmsysorg/sglang:nemotron3-5-super",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--attention-backend",
+      "flashinfer",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-dtype",
+      "bfloat16",
+      "--enable-mamba-cache-stochastic-rounding",
+      "--mamba-cache-philox-rounds",
+      "5",
+      "--mamba-radix-cache-strategy",
+      "extra_buffer",
+      "--reasoning-parser",
+      "nemotron_3",
+      "--context-length",
+      "4096",
+      "--max-running-requests",
+      "4",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-num-steps",
+      "5",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "6"
+    ]
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "backend": "trtllm",
+    "gpu_count": 1,
+    "min_sm": 100,
+    "runtime": "TensorRT-LLM 1.3.0rc28 (55f7eca861613bd60e1ac34d5916f091cd89d558) + PR #19597 Mamba cache patch",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--reasoning_parser",
+      "nemotron-v3"
+    ],
+    "config": {
+      "tensor_parallel_size": 1,
+      "moe_expert_parallel_size": 1,
+      "trust_remote_code": true,
+      "enable_chunked_prefill": true,
+      "disable_overlap_scheduler": false,
+      "max_batch_size": 16,
+      "max_num_tokens": 8192,
+      "max_seq_len": 1048576,
+      "attn_backend": "TRTLLM",
+      "moe_config": {
+        "backend": "TRTLLM"
+      },
+      "kv_cache_config": {
+        "dtype": "fp8",
+        "tokens_per_block": 32,
+        "mamba_ssm_cache_dtype": "float16",
+        "mamba_ssm_stochastic_rounding": false,
+        "free_gpu_memory_fraction": 0.85,
+        "enable_block_reuse": true,
+        "mamba_state_config": {
+          "periodic_snapshot_interval": 0,
+          "additional_snapshot_offsets_from_start": [
+            50016
+          ],
+          "additional_snapshot_offsets_from_end": [
+            0
+          ],
+          "enable_branch_snapshot": true
+        }
+      },
+      "cuda_graph_config": {
+        "enable_padding": true,
+        "batch_sizes": [
+          1,
+          2,
+          4,
+          8,
+          12,
+          16
+        ]
+      },
+      "speculative_config": {
+        "decoding_type": "MTP",
+        "max_draft_len": 5
+      },
+      "guided_decoding_backend": "xgrammar"
+    }
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "backend": "vllm",
+    "gpu_count": 1,
+    "min_sm": 121,
+    "runtime": "vllm/vllm-openai:v0.32.0 or nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--max-num-seqs",
+      "1",
+      "--gpu-memory-utilization",
+      "0.75",
+      "--max-num-batched-tokens",
+      "8192",
+      "--speculative-config",
+      "{\"model\":\"{draft}\",\"num_speculative_tokens\":7,\"method\":\"dflash\"}",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-cache-dtype",
+      "float16",
+      "--enable-mamba-cache-stochastic-rounding",
+      "--mamba-cache-philox-rounds",
+      "5",
+      "--enable-mamba-shared-prefix-checkpoint",
+      "--block-size",
+      "64",
+      "--prefix-match-unit",
+      "64",
+      "--reasoning-parser",
+      "nemotron_v3",
+      "--max-model-len",
+      "4096"
+    ],
+    "target_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "draft_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "gpu_name": "GB10"
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "backend": "sglang",
+    "gpu_count": 1,
+    "min_sm": 121,
+    "runtime": "lmsysorg/sglang:nemotron3-5-super",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--attention-backend",
+      "flashinfer",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-dtype",
+      "bfloat16",
+      "--enable-mamba-cache-stochastic-rounding",
+      "--mamba-cache-philox-rounds",
+      "5",
+      "--mamba-radix-cache-strategy",
+      "extra_buffer",
+      "--reasoning-parser",
+      "nemotron_3",
+      "--context-length",
+      "4096",
+      "--max-running-requests",
+      "1",
+      "--speculative-algorithm",
+      "DFLASH",
+      "--speculative-draft-model-path",
+      "{draft}"
+    ],
+    "target_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "draft_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "gpu_name": "GB10"
+  },
+  {
+    "model_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "backend": "trtllm",
+    "gpu_count": 1,
+    "min_sm": 121,
+    "runtime": "TensorRT-LLM 1.3.0rc28 (55f7eca861613bd60e1ac34d5916f091cd89d558) + PR #19597 Mamba cache patch",
+    "sources": [
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+      "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4"
+    ],
+    "args": [
+      "--reasoning_parser",
+      "nemotron-v3"
+    ],
+    "target_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4",
+    "draft_model": "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr",
+    "gpu_name": "GB10",
+    "config": {
+      "trust_remote_code": true,
+      "dtype": "bfloat16",
+      "tensor_parallel_size": 1,
+      "moe_expert_parallel_size": 1,
+      "max_batch_size": 2,
+      "max_num_tokens": 4096,
+      "max_seq_len": 131072,
+      "enable_chunked_prefill": true,
+      "disable_overlap_scheduler": false,
+      "cuda_graph_config": null,
+      "attn_backend": "TRTLLM",
+      "kv_cache_config": {
+        "dtype": "fp8",
+        "free_gpu_memory_fraction": 0.9,
+        "max_gpu_total_bytes": 5368709120,
+        "host_cache_size": 0,
+        "mamba_ssm_cache_dtype": "float16",
+        "mamba_ssm_stochastic_rounding": false,
+        "enable_block_reuse": true,
+        "use_kv_cache_manager_v2": true,
+        "mamba_state_config": {
+          "enable_branch_snapshot": true
+        }
+      },
+      "nvfp4_gemm_config": {
+        "allowed_backends": [
+          "cutlass",
+          "cublaslt",
+          "cuda_core"
+        ]
+      },
+      "moe_config": {
+        "backend": "CUTEDSL"
+      },
+      "speculative_config": {
+        "decoding_type": "DFlash",
+        "speculative_model": "{draft}",
+        "max_draft_len": 7,
+        "attention_backend": "TRTLLM",
+        "context_recompute_tail": 0
+      },
+      "guided_decoding_backend": "xgrammar"
+    }
+  },
+  {
+    "model_id": "stepfun-ai/Step-5-Preview-NVFP4",
+    "backend": "sglang",
+    "gpu_count": 4,
+    "min_sm": 100,
+    "runtime": "lmsysorg/sglang:step-5-preview (includes required FlashInfer patches)",
+    "sources": [
+      "https://huggingface.co/stepfun-ai/Step-5-Preview-NVFP4",
+      "https://docs.sglang.io/cookbook/autoregressive/StepFun/Step-5-Preview"
+    ],
+    "args": [
+      "--trust-remote-code",
+      "--ep-size",
+      "4",
+      "--moe-runner-backend",
+      "flashinfer_trtllm",
+      "--attention-backend",
+      "fa4",
+      "--page-size",
+      "64",
+      "--kv-cache-dtype",
+      "bfloat16",
+      "--mem-fraction-static",
+      "0.9",
+      "--swa-full-tokens-ratio",
+      "0.03",
+      "--chunked-prefill-size",
+      "16384",
+      "--max-running-requests",
+      "4",
+      "--flashinfer-allreduce-fusion-backend",
+      "trtllm",
+      "--speculative-algorithm",
+      "EAGLE",
+      "--speculative-num-steps",
+      "3",
+      "--speculative-eagle-topk",
+      "1",
+      "--speculative-num-draft-tokens",
+      "4",
+      "--enable-multi-layer-eagle",
+      "--reasoning-parser",
+      "step5",
+      "--context-length",
+      "4096"
+    ]
+  },
+  {
+    "model_id": "nvidia/Qwen-Image-NVFP4",
+    "backend": "trtllm",
+    "gpu_count": 1,
+    "min_sm": 100,
+    "runtime": "nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc28",
+    "sources": [
+      "https://huggingface.co/nvidia/Qwen-Image-NVFP4"
+    ],
+    "args": [],
+    "image": true,
+    "config_flag": "--visual_gen_args",
+    "config": {
+      "attention_config": {
+        "backend": "VANILLA"
+      },
+      "parallel_config": {
+        "cfg_size": 1,
+        "ulysses_size": 1
+      },
+      "torch_compile_config": {
+        "enable": false
+      },
+      "cuda_graph_config": {
+        "enable": false
+      },
+      "compilation_config": {
+        "skip_warmup": true
+      }
+    }
+  }
+]

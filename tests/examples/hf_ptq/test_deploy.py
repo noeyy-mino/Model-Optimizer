@@ -15,9 +15,11 @@
 
 import os
 import shutil
+from pathlib import Path
 
 import pytest
 from _test_utils.deploy_utils import ModelDeployerList
+from _test_utils.hf_serving import load_serving_cases, run_serving_case
 
 pytestmark = pytest.mark.release
 
@@ -50,10 +52,12 @@ def clear_hf_cache():
 
 
 @pytest.fixture(autouse=True)
-def cleanup_after_test():
+def cleanup_after_test(request):
     """Automatically clean up after each test."""
     yield  # Run the test
-    clear_hf_cache()  # Clean up after test completes
+    # Serving recipes reuse large target/draft snapshots across backends.
+    if "serving_case" not in request.fixturenames:
+        clear_hf_cache()  # Clean up after legacy offline tests
 
 
 @pytest.mark.parametrize(
@@ -896,3 +900,14 @@ def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4_dflash(command):
 )
 def test_nvidia_nemotron_3_5_lightning_30b_a3b_nvfp4(command):
     command.run()
+
+
+@pytest.mark.parametrize(
+    "serving_case",
+    load_serving_cases(Path(__file__).with_name("deploy_model_cards.json")),
+    ids=lambda case: case.test_id,
+)
+@pytest.mark.timeout(int(os.environ.get("MODELOPT_QA_TEST_TIMEOUT", "4800")))
+def test_model_card_deploy(serving_case, tmp_path):
+    """Exercise published serving recipes, including paired drafts and VisualGen."""
+    run_serving_case(serving_case, tmp_path)
